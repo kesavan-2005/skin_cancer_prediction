@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+
+# Virtual envs
+.venv/
+venv/
+.env
+
+
+# Bytecode and caches
+*.so
+
+
+# Distribution
+build/
+dist/
+*.egg-info/
+
+
+# IDEs
+.vscode/
+.idea/
+
+
+# Jupyter
+.ipynb_checkpoints
+
+
+# Logs
+*.log
+logs/
+
+
+# Model and data (do not push heavy files)
+*.h5
+*.pth
+*.pt
+*.ckpt
+*.pb
+*.onnx
+*.tflite
+models/
+weights/
+data/
+datasets/
+
+
+# OS files
+.DS_Store
+Thumbs.db

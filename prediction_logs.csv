@@ -1,0 +1,3 @@
+timestamp,dx_type,sex,localization,age,predicted_label,predicted_prob,top_k
+2025-08-09T20:17:35.825230,histo,male,upper extremity,75,mel,0.49609094858169556,mel:0.4961; nv:0.2027; bcc:0.1584; bkl:0.0862; vasc:0.0370
+2025-08-09T20:20:30.216093,histo,male,chest,70,bkl,0.9558548331260681,bkl:0.9559; mel:0.0194; akiec:0.0160; nv:0.0053; vasc:0.0017
