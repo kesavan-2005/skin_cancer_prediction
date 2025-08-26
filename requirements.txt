@@ -1,14 +1,9 @@
-streamlit
-tensorflow
-plotly
-pillow
-fpdf2
-scikit-learn
 numpy
 pandas
+tensorflow
+streamlit
+plotly
+pillow
+fpdf
 requests
 streamlit-lottie
-# optional extras you use:
-matplotlib
-scipy
-streamlit-mic-recorder

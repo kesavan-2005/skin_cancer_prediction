@@ -1,53 +1,32 @@
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+*.pyo
+*.pyd
+*.swp
 
-
-# Virtual envs
+# Virtual environments
 .venv/
+env/
 venv/
-.env
 
-
-# Bytecode and caches
-*.so
-
-
-# Distribution
-build/
-dist/
-*.egg-info/
-
-
-# IDEs
+# IDE / Editor
 .vscode/
 .idea/
 
-
-# Jupyter
-.ipynb_checkpoints
-
+# Jupyter / IPython
+.ipynb_checkpoints/
 
 # Logs
 *.log
-logs/
 
-
-# Model and data (do not push heavy files)
-
-*.pth
-*.pt
-*.ckpt
-*.pb
-*.onnx
-*.tflite
-models/
-weights/
-data/
-datasets/
-
-
-# OS files
+# OS
 .DS_Store
 Thumbs.db
+
+# Data
+*.csv
+*.tsv
+
+# Models (allow .h5 for Git LFS)
+!*.h5
