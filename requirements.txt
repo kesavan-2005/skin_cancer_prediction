@@ -7,3 +7,4 @@ pillow
 fpdf
 requests
 streamlit-lottie
+gdown
