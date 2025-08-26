@@ -35,7 +35,7 @@ logs/
 
 
 # Model and data (do not push heavy files)
-*.h5
+
 *.pth
 *.pt
 *.ckpt
