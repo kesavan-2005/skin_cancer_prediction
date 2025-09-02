@@ -15,7 +15,7 @@ import requests
 import tempfile
 
 # ---------------- PATHS ----------------
-BASE_DIR = os.path.dirname(_file_)
+BASE_DIR = os.path.dirname(__file__)
 MODEL_DIR = os.path.join(BASE_DIR, "fmodel")
 MODEL_PATH = os.path.join(MODEL_DIR, "trained_multimodal_model.h5")
 LABEL_ENCODER_PATH = os.path.join(MODEL_DIR, "label_encoder.pkl")
