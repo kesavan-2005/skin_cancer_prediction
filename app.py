@@ -335,7 +335,7 @@ if app_section == "📤 Upload & Diagnose":
         # Benign / Normal Skin Alert
         benign_labels = {"nv", "bkl", "vasc", "df"}
         if pred_label.lower() in benign_labels and confidence > 0.6:
-            st.info("✅ Likely benign based on this image. Continue to monitor and consult a doctor if you notice changes.")
+            st.info("✅ You are LIKELY affected by skin cancer you are alright .")
 
         # Success/Warning Feedback
         if confidence < 0.5:
