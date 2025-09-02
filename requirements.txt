@@ -1,10 +1,10 @@
+streamlit
+tensorflow
+keras
+pillow
 numpy
 pandas
-tensorflow
-streamlit
 plotly
-pillow
 fpdf
 requests
 streamlit-lottie
-gdown
