@@ -13,7 +13,6 @@ from fpdf import FPDF
 from streamlit_lottie import st_lottie
 import requests
 import tempfile
-import gdown  # NEW
 
 # ---------------- PATHS ----------------
 BASE_DIR = os.path.dirname(__file__)
@@ -26,17 +25,6 @@ SEX_ENCODER_PATH = os.path.join(MODEL_DIR, "sex_encoder.pkl")
 LOC_ENCODER_PATH = os.path.join(MODEL_DIR, "localization_encoder.pkl")
 
 IMG_SIZE = (224, 224)
-
-# ---------------- GOOGLE DRIVE MODEL ----------------
-DRIVE_ID = "1mv86lheHP_FMBd0rlehJLTTDHBKrTdoh"  # Your shared model ID
-DRIVE_URL = f"https://drive.google.com/uc?id={DRIVE_ID}"
-
-def download_model():
-    """Download model from Google Drive if not already present"""
-    if not os.path.exists(MODEL_PATH):
-        os.makedirs(MODEL_DIR, exist_ok=True)
-        st.info("Downloading model from Google Drive... Please wait ⏳")
-        gdown.download(DRIVE_URL, MODEL_PATH, quiet=False)
 
 # ----------- Utility: Lottie Animations -----------
 def load_lottie_url(url: str):
@@ -76,10 +64,6 @@ st.markdown("""
 # ---------------- LOAD MODEL + ENCODERS ----------------
 @st.cache_resource(show_spinner="Loading model and assets...")
 def load_assets():
-    # Ensure model exists
-    download_model()
-
-    # Load encoders/scaler
     with open(LABEL_ENCODER_PATH, "rb") as f:
         le = pickle.load(f)
     with open(SCALER_PATH, "rb") as f:
@@ -91,7 +75,6 @@ def load_assets():
     with open(LOC_ENCODER_PATH, "rb") as f:
         loc_le = pickle.load(f)
 
-    # Load keras model
     model = load_model(
         MODEL_PATH,
         custom_objects={"focal_loss_fixed": None},
@@ -225,7 +208,7 @@ if app_section == "🏠 Home":
 
 # ------ Upload & Diagnose ------
 if app_section == "📤 Upload & Diagnose":
-    st.warning("⚠️ Please upload only skin lesion images. Other types of medical images (e.g., X-rays, MRI) are not supported.", icon="🚨")
+    st.warning("⚠ Please upload only skin lesion images. Other types of medical images (e.g., X-rays, MRI) are not supported.", icon="🚨")
     st.markdown("""
     #### Supported Skin Lesion Types
     <div style="padding:9px 18px;background:#e8f1fb;border-radius:14px;margin-bottom:1.2em;">
@@ -421,4 +404,4 @@ if app_section == "ℹ About":
         </div>
     """, unsafe_allow_html=True)
 
-st.caption("🛡 All processing is local. No user info leaves your device. | Created by Kesavan | vNext-2025")
+st.caption("🛡 All processing is local. No user info leaves your device. | Created by Kesavan | vNext-2025")
