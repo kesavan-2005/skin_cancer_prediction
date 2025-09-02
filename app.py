@@ -1,6 +1,6 @@
 import os
+import io
 import datetime
-import pickle
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -13,9 +13,14 @@ from fpdf import FPDF
 from streamlit_lottie import st_lottie
 import requests
 import tempfile
+import joblib
 
 # ---------------- PATHS ----------------
-BASE_DIR = os.path.dirname(__file__)
+try:
+    BASE_DIR = os.path.dirname(__file__)
+except NameError:
+    BASE_DIR = os.getcwd()
+
 MODEL_DIR = os.path.join(BASE_DIR, "fmodel")
 MODEL_PATH = os.path.join(MODEL_DIR, "trained_multimodal_model.h5")
 LABEL_ENCODER_PATH = os.path.join(MODEL_DIR, "label_encoder.pkl")
@@ -28,10 +33,13 @@ IMG_SIZE = (224, 224)
 
 # ----------- Utility: Lottie Animations -----------
 def load_lottie_url(url: str):
-    r = requests.get(url)
-    if r.status_code != 200:
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception:
         return None
-    return r.json()
 
 loading_anim = load_lottie_url("https://assets10.lottiefiles.com/packages/lf20_tll0j4bb.json")
 success_anim = load_lottie_url("https://assets10.lottiefiles.com/private_files/lf30_e3pteeho.json")
@@ -62,18 +70,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ---------------- LOAD MODEL + ENCODERS ----------------
+def _assert_files(paths):
+    missing = [p for p in paths if not os.path.exists(p)]
+    if missing:
+        st.error("Required model asset(s) missing:")
+        for p in missing:
+            st.write(f"• `{os.path.relpath(p, BASE_DIR)}`")
+        st.stop()
+
 @st.cache_resource(show_spinner="Loading model and assets...")
 def load_assets():
-    with open(LABEL_ENCODER_PATH, "rb") as f:
-        le = pickle.load(f)
-    with open(SCALER_PATH, "rb") as f:
-        scaler = pickle.load(f)
-    with open(DX_TYPE_ENCODER_PATH, "rb") as f:
-        dx_type_le = pickle.load(f)
-    with open(SEX_ENCODER_PATH, "rb") as f:
-        sex_le = pickle.load(f)
-    with open(LOC_ENCODER_PATH, "rb") as f:
-        loc_le = pickle.load(f)
+    _assert_files([MODEL_PATH, LABEL_ENCODER_PATH, SCALER_PATH,
+                   DX_TYPE_ENCODER_PATH, SEX_ENCODER_PATH, LOC_ENCODER_PATH])
+
+    # Use joblib for all sklearn artifacts
+    le = joblib.load(LABEL_ENCODER_PATH)
+    scaler = joblib.load(SCALER_PATH)
+    dx_type_le = joblib.load(DX_TYPE_ENCODER_PATH)
+    sex_le = joblib.load(SEX_ENCODER_PATH)
+    loc_le = joblib.load(LOC_ENCODER_PATH)
 
     model = load_model(
         MODEL_PATH,
@@ -117,20 +132,23 @@ rec_map = {
 }
 
 # ---------------- HELPERS ----------------
-def preprocess_image(uploaded_file):
-    image = Image.open(uploaded_file).convert("RGB")
+def preprocess_image(uploaded_file_or_bytes):
+    if isinstance(uploaded_file_or_bytes, (bytes, bytearray)):
+        image = Image.open(io.BytesIO(uploaded_file_or_bytes)).convert("RGB")
+    else:
+        image = Image.open(uploaded_file_or_bytes).convert("RGB")
     image = image.resize(IMG_SIZE, Image.BILINEAR)
     arr = np.asarray(image).astype(np.float32)
     arr = preprocess_input(arr)  # [-1,1]
     return arr
 
 def get_tab_tensor(age, sex, dx_type, loc):
-    age_scaled = scaler.transform([[age]])[0]
+    age_scaled = scaler.transform(np.array([[age]], dtype=np.float32))[0, 0]
     feats = np.array([
-        float(dx_type_le.transform([dx_type])),
+        float(dx_type_le.transform([dx_type])[0]),
         float(age_scaled),
-        float(sex_le.transform([sex])),
-        float(loc_le.transform([loc])),
+        float(sex_le.transform([sex])[0]),
+        float(loc_le.transform([loc])[0]),
     ], dtype=np.float32)
     return np.expand_dims(feats, axis=0)
 
@@ -144,6 +162,7 @@ def get_model_inputs(model):
     return img_input, tab_input
 
 def get_last_conv_layer(model):
+    # works for MobileNetV2 (last Conv2D usually named "Conv_1")
     for layer in reversed(model.layers):
         if isinstance(layer, tf.keras.layers.Conv2D):
             return layer
@@ -164,16 +183,15 @@ def make_gradcam_heatmap(img_array, tab_array, model, class_index=None):
         class_channel = predictions[:, class_index]
     grads = tape.gradient(class_channel, conv_outputs)
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    conv_outputs = conv_outputs
     heatmap = tf.reduce_sum(tf.multiply(pooled_grads, conv_outputs), axis=-1)
     heatmap = tf.nn.relu(heatmap)
     heatmap = heatmap / (tf.reduce_max(heatmap) + 1e-8)
     return heatmap.numpy(), predictions.numpy()
 
 def render_gradcam_views(img_array, heatmap, alpha=0.35):
+    import matplotlib.cm as cm  # requires matplotlib in requirements
     orig = ((img_array + 1.0) * 127.5).clip(0, 255).astype(np.uint8)
     heatmap_resized = tf.image.resize(heatmap[..., np.newaxis], IMG_SIZE).numpy().squeeze()
-    import matplotlib.cm as cm
     hm_255 = (heatmap_resized * 255.0).astype(np.uint8)
     jet = cm.get_cmap("jet")
     heatmap_rgb = (jet(hm_255)[:, :, :3] * 255).astype(np.uint8)
@@ -181,9 +199,14 @@ def render_gradcam_views(img_array, heatmap, alpha=0.35):
     return orig, heatmap_rgb, overlay
 
 def softmax_safe(x):
+    x = np.asarray(x, dtype=np.float32)
     x = x - np.max(x)
     e = np.exp(x)
     return e / (np.sum(e) + 1e-12)
+
+# Ensure session state containers
+st.session_state.setdefault("history", [])
+st.session_state.setdefault("last_image_bytes", None)
 
 # ---------------- MAIN UI: NAVIGATION ---------------
 st.sidebar.markdown("## 🔎 Navigation")
@@ -194,14 +217,14 @@ app_section = st.sidebar.radio("Jump to",
 if app_section == "🏠 Home":
     st.markdown("<h1 style='color:#FF4B4B;font-size:2.5em;'>🧠 Skin Cancer Multimodal Diagnosis</h1>", unsafe_allow_html=True)
     st.caption("AI-powered tool for educational skin lesion assessment. No patient data leaves your device.")
-    st_lottie(loading_anim, key="intro-lottie", height=180)
+    if loading_anim:
+        st_lottie(loading_anim, key="intro-lottie", height=180)
     st.markdown("""
     <div style="padding:18px 28px;background:#fff4e7;border-radius:18px;max-width:700px;">
     <b>How to use?</b><br>
     - Upload a clear skin lesion photo.<br>
     - Enter patient details.<br>
-    - Instantly get diagnosis, Grad-CAM visuals, PDF reports, and advice.<br>
-    <br>
+    - Instantly get diagnosis, Grad-CAM visuals, PDF reports, and advice.<br><br>
     <i><b>Disclaimer:</b> This is NOT a substitute for real medical care. Always consult a dermatologist for any concern.</i>
     </div>
     """, unsafe_allow_html=True)
@@ -229,7 +252,11 @@ if app_section == "📤 Upload & Diagnose":
             uploaded_file = st.file_uploader("Skin Lesion Image", type=["jpg", "jpeg", "png"],
                                              help="Clear, close-up preferred.", accept_multiple_files=False)
             if uploaded_file:
-                st.image(uploaded_file, use_column_width=True, caption="Uploaded Image Preview", output_format="PNG")
+                # preview and store bytes for reuse in Report
+                file_bytes = uploaded_file.read()
+                st.session_state["last_image_bytes"] = file_bytes
+                st.image(Image.open(io.BytesIO(file_bytes)), use_column_width=True,
+                         caption="Uploaded Image Preview", output_format="PNG")
         with c2:
             patient_name = st.text_input("Patient Name", max_chars=100)
             patient_mobile = st.text_input("Patient Mobile Number", max_chars=20, help="Include country code if applicable")
@@ -241,10 +268,11 @@ if app_section == "📤 Upload & Diagnose":
 
         submitted = st.form_submit_button("🔍 Diagnose")
 
-    if submitted and uploaded_file:
-        st_lottie(loading_anim, loop=True, height=90, key="spinner")
+    if submitted and st.session_state.get("last_image_bytes"):
+        if loading_anim:
+            st_lottie(loading_anim, loop=True, height=90, key="spinner")
         try:
-            img_array = preprocess_image(uploaded_file)
+            img_array = preprocess_image(st.session_state["last_image_bytes"])
             tab_array = get_tab_tensor(age, sex, dx_type, loc)
             heatmap, preds = make_gradcam_heatmap(img_array, tab_array, model)
             preds = np.asarray(preds).reshape(-1)
@@ -253,40 +281,48 @@ if app_section == "📤 Upload & Diagnose":
             pred_idx = int(np.argmax(preds))
             pred_label = le.classes_[pred_idx]
             confidence = float(preds[pred_idx])
-        except Exception as e:
-            st.error("⚠ There was an error processing this image. Try another or contact admin.")
+        except Exception:
+            st.error("⚠ There was an error processing this image. Try another image or contact the maintainer.")
             st.stop()
 
-        st_lottie(success_anim, height=80, key="done-suc")
+        if success_anim:
+            st_lottie(success_anim, height=80, key="done-suc")
         st.markdown(
             f"""<div class='result-card'>
             <h2>🧬 <span style='color:#eb354c'>{pred_label}</span></h2>
             <h5>Confidence: <span style='color:#247c49'>{confidence:.1%}</span></h5>
-            <b>Patient Name:</b> {patient_name}<br>
-            <b>Patient Mobile:</b> {patient_mobile}<br>
+            <b>Patient Name:</b> {patient_name or '-'}<br>
+            <b>Patient Mobile:</b> {patient_mobile or '-'}<br>
             <b>Age:</b> {age} | <b>Sex:</b> {sex}<br>
             <span style='font-size:1.1em;font-weight:bold;color:#f1835b;'>{'High risk ⛔' if pred_label.lower() == 'mel' or confidence < 0.3 else 'Moderate/Low risk ✅'}</span>
             </div>""", unsafe_allow_html=True
         )
+
+        # Confidence chart
         fig_conf = px.bar(
-            x=le.classes_, y=preds,
+            x=list(le.classes_), y=list(preds),
             labels={"x": "Class", "y": "Confidence"},
             title="AI Confidence in Each Diagnosis",
-            color=le.classes_,
+            color=list(le.classes_),
             color_discrete_sequence=px.colors.sequential.RdPu
         )
-        fig_conf.update_traces(text=[f"{p:.1%}" for p in preds], textposition="outside")
+        fig_conf.update_traces(text=[f"{p:.1%}" for p in preds], textposition="outside", cliponaxis=False)
         fig_conf.update_yaxes(range=[0, 1])
         st.plotly_chart(fig_conf, use_container_width=True)
 
-        # --- GradCAM visuals ---
-        orig, hm_rgb, overlay = render_gradcam_views(img_array, heatmap)
-        grad_cols = st.columns(3)
-        grad_cols[0].image(orig, caption="Original", use_column_width=True)
-        grad_cols[1].image(hm_rgb, caption="Grad-CAM Heatmap", use_column_width=True)
-        grad_cols[2].image(overlay, caption="Overlay", use_column_width=True)
+        # GradCAM visuals
+        try:
+            orig, hm_rgb, overlay = render_gradcam_views(img_array, heatmap)
+            grad_cols = st.columns(3)
+            grad_cols[0].image(orig, caption="Original", use_column_width=True)
+            grad_cols[1].image(hm_rgb, caption="Grad-CAM Heatmap", use_column_width=True)
+            grad_cols[2].image(overlay, caption="Overlay", use_column_width=True)
+            # Save overlay in session for report
+            st.session_state["last_overlay"] = overlay
+        except Exception:
+            st.info("Grad-CAM visualization unavailable for this model/image.")
 
-        # --- Recommendation ---
+        # Recommendation
         info = rec_map.get(pred_label.lower(), {
             "rec": "Unrecognized lesion type. Consult dermatologist urgently.",
             "prev": "General sun safety and monthly skin checks."
@@ -296,20 +332,18 @@ if app_section == "📤 Upload & Diagnose":
         <b>Prevention:</b> {info['prev']}
         </div>""", unsafe_allow_html=True)
 
-        # --- Benign / Normal Skin Alert ---
-        benign_labels = ["nv", "bkl", "vasc", "df"]
+        # Benign / Normal Skin Alert
+        benign_labels = {"nv", "bkl", "vasc", "df"}
         if pred_label.lower() in benign_labels and confidence > 0.6:
-            st.info("✅ You are likely NOT affected by skin cancer based on this image. Continue to monitor your skin and consult a doctor if you notice changes.")
+            st.info("✅ Likely benign based on this image. Continue to monitor and consult a doctor if you notice changes.")
 
-        # --- Success/Warning Feedback ---
+        # Success/Warning Feedback
         if confidence < 0.5:
-            st.warning("🟡 Low confidence: Please consult a real doctor and do not rely solely on this prediction.")
+            st.warning("🟡 Low confidence: Please consult a clinician and do not rely solely on this prediction.")
         else:
             st.success("✅ Diagnosis successful. See results above.")
 
-        # --- Save to session state ---
-        if "history" not in st.session_state:
-            st.session_state["history"] = []
+        # Save to session state (history)
         current_result = {
             "date": datetime.date.today().isoformat(),
             "patient_name": patient_name,
@@ -325,13 +359,13 @@ if app_section == "📤 Upload & Diagnose":
         if not st.session_state["history"] or st.session_state["history"][-1] != current_result:
             st.session_state["history"].append(current_result)
             st.success("Result saved to Progress!")
-    elif submitted and not uploaded_file:
+    elif submitted and not st.session_state.get("last_image_bytes"):
         st.error("Please upload a skin lesion image to proceed.")
 
 # ------- PROGRESS & HISTORY -------
 if app_section == "📈 Progress & History":
     st.markdown("<h2 style='color:#407be7;'>📈 Your Prediction Progress</h2>", unsafe_allow_html=True)
-    if "history" in st.session_state and st.session_state["history"]:
+    if st.session_state["history"]:
         df_hist = pd.DataFrame(st.session_state["history"])
         fig_progress = px.line(df_hist, x="date", y="confidence", markers=True, title="Saved Results Over Time")
         fig_progress.update_yaxes(range=[0, 1])
@@ -350,9 +384,10 @@ if app_section == "📈 Progress & History":
 # ------- REPORT PDF EXPORT -------
 if app_section == "📑 Report":
     st.markdown("<h2 style='color:#9b50a2;'>📑 Doctor PDF Report</h2>", unsafe_allow_html=True)
-    if "history" in st.session_state and st.session_state["history"]:
+    if st.session_state["history"]:
         last = st.session_state["history"][-1]
         st.write("Latest Result in Report: ", last)
+
         if st.button("📑 Export PDF", use_container_width=True):
             pdf = FPDF()
             pdf.add_page()
@@ -361,25 +396,36 @@ if app_section == "📑 Report":
             pdf.cell(195, 10, "Skin Cancer AI Prediction Report", ln=True, align="C")
             pdf.ln(10)
             pdf.set_text_color(0)
+
+            # Safe effective page width across FPDF versions
+            epw = pdf.w - 2 * pdf.l_margin
+
             for key, val in last.items():
                 if key != "symptoms":
-                    pdf.multi_cell(pdf.epw, 10, f"{key.replace('_', ' ').capitalize()}: {val}")
+                    pdf.multi_cell(epw, 10, f"{key.replace('_', ' ').capitalize()}: {val}")
             pdf.ln(5)
-            pdf.multi_cell(pdf.epw, 10, f"Symptoms: {last['symptoms']}")
-            # Add GradCAM and Charts (recompute for temp files)
+            pdf.multi_cell(epw, 10, f"Symptoms: {last.get('symptoms','-')}")
+
+            # Embed Grad-CAM overlay if available
             try:
-                if 'uploaded_file' in locals():
-                    img_array = preprocess_image(uploaded_file)
+                overlay = st.session_state.get("last_overlay", None)
+                if overlay is None and st.session_state.get("last_image_bytes") is not None:
+                    # recompute if needed
+                    img_array = preprocess_image(st.session_state["last_image_bytes"])
                     tab_array = get_tab_tensor(last['age'], last['sex'], last['dx_type'], last['loc'])
-                    heatmap, preds = make_gradcam_heatmap(img_array, tab_array, model)
-                    orig, hm_rgb, overlay = render_gradcam_views(img_array, heatmap)
+                    heatmap, _ = make_gradcam_heatmap(img_array, tab_array, model)
+                    _, _, overlay = render_gradcam_views(img_array, heatmap)
+
+                if overlay is not None:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp_overlay:
                         Image.fromarray(overlay).save(tmp_overlay.name)
                         pdf.ln(10)
-                        pdf.multi_cell(pdf.epw, 10, "Grad-CAM Overlay:")
-                        pdf.image(tmp_overlay.name, w=100)
+                        pdf.multi_cell(epw, 10, "Grad-CAM Overlay:")
+                        pdf.image(tmp_overlay.name, w=120)
             except Exception:
+                # If any visualization fails, continue with text-only report
                 pass
+
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
                 pdf.output(tmp_pdf.name)
                 with open(tmp_pdf.name, "rb") as f:
@@ -404,4 +450,4 @@ if app_section == "ℹ About":
         </div>
     """, unsafe_allow_html=True)
 
-st.caption("🛡 All processing is local. No user info leaves your device. | Created by Kesavan | vNext-2025")
+st.caption("🛡 All processing is local. No user info leaves your device. | Created by Kesavan | vNext-2025")
